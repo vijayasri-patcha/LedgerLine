@@ -1,0 +1,269 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  CUSTOMER
+  DEMO_OPERATOR
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum AccountStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+enum LedgerNormalSide {
+  DEBIT
+  CREDIT
+}
+
+enum TransactionType {
+  TRANSFER
+  DEPOSIT
+  WITHDRAWAL
+  REVERSAL
+}
+
+enum TransactionStatus {
+  POSTED
+}
+
+enum IdempotencyStatus {
+  RESERVED
+  POSTED
+  REJECTED
+}
+
+enum AttemptOutcome {
+  POSTED
+  BUSINESS_REJECTED
+  IDEMPOTENT_REPLAY
+  IDEMPOTENCY_CONFLICT
+  VALIDATION_REJECTED
+  PROCESSING_ERROR
+}
+
+enum SessionStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum RefreshStatus {
+  CURRENT
+  ROTATED
+  REVOKED
+}
+
+enum ReconciliationStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id              String               @id @default(uuid()) @db.Uuid
+  name            String
+  email           String               @unique
+  passwordHash    String               @map("password_hash")
+  role            UserRole             @default(CUSTOMER)
+  status          UserStatus           @default(ACTIVE)
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+  sessions        UserSession[]
+  accounts        Account[]
+  transactions    Transaction[]
+  attempts        TransactionAttempt[]
+  auditLogs       AuditLog[]
+  reconciliations ReconciliationRun[]
+
+  @@map("users")
+}
+
+model UserSession {
+  id                 String                @id @default(uuid()) @db.Uuid
+  userId             String                @map("user_id") @db.Uuid
+  currentRefreshHash String                @map("current_refresh_hash")
+  status             SessionStatus         @default(ACTIVE)
+  expiresAt          DateTime              @map("expires_at")
+  revokedAt          DateTime?             @map("revoked_at")
+  createdAt          DateTime              @default(now()) @map("created_at")
+  user               User                  @relation(fields: [userId], references: [id])
+  refreshTokens      RefreshTokenHistory[]
+
+  @@index([userId])
+  @@map("user_sessions")
+}
+
+model RefreshTokenHistory {
+  id        String        @id @default(uuid()) @db.Uuid
+  sessionId String        @map("session_id") @db.Uuid
+  tokenHash String        @unique @map("token_hash")
+  status    RefreshStatus
+  createdAt DateTime      @default(now()) @map("created_at")
+  rotatedAt DateTime?     @map("rotated_at")
+  session   UserSession   @relation(fields: [sessionId], references: [id])
+
+  @@map("refresh_token_history")
+}
+
+model Account {
+  id            String         @id @default(uuid()) @db.Uuid
+  ownerUserId   String         @map("owner_user_id") @db.Uuid
+  accountNumber String         @unique @map("account_number")
+  currency      String         @default("INR")
+  status        AccountStatus  @default(ACTIVE)
+  balanceMinor  BigInt         @default(0) @map("balance_minor")
+  createdAt     DateTime       @default(now()) @map("created_at")
+  updatedAt     DateTime       @updatedAt @map("updated_at")
+  owner         User           @relation(fields: [ownerUserId], references: [id])
+  ledgerAccount LedgerAccount?
+
+  @@index([ownerUserId])
+  @@map("accounts")
+}
+
+model LedgerAccount {
+  id         String           @id @default(uuid()) @db.Uuid
+  accountId  String?          @unique @map("account_id") @db.Uuid
+  code       String?          @unique
+  normalSide LedgerNormalSide @map("normal_side")
+  status     String           @default("ACTIVE")
+  currency   String           @default("INR")
+  account    Account?         @relation(fields: [accountId], references: [id])
+  entries    LedgerEntry[]
+
+  @@map("ledger_accounts")
+}
+
+model Transaction {
+  id          String               @id @default(uuid()) @db.Uuid
+  type        TransactionType
+  status      TransactionStatus    @default(POSTED)
+  amountMinor BigInt               @map("amount_minor")
+  currency    String
+  description String?
+  initiatedBy String               @map("initiated_by") @db.Uuid
+  createdAt   DateTime             @default(now()) @map("created_at")
+  postedAt    DateTime             @default(now()) @map("posted_at")
+  entries     LedgerEntry[]
+  attempts    TransactionAttempt[]
+  user        User?                @relation(fields: [userId], references: [id])
+  userId      String?              @map("user_id") @db.Uuid
+
+  @@index([createdAt])
+  @@map("transactions")
+}
+
+model LedgerEntry {
+  id              String        @id @default(uuid()) @db.Uuid
+  transactionId   String        @map("transaction_id") @db.Uuid
+  ledgerAccountId String        @map("ledger_account_id") @db.Uuid
+  direction       String
+  amountMinor     BigInt        @map("amount_minor")
+  currency        String
+  createdAt       DateTime      @default(now()) @map("created_at")
+  transaction     Transaction   @relation(fields: [transactionId], references: [id])
+  ledgerAccount   LedgerAccount @relation(fields: [ledgerAccountId], references: [id])
+
+  @@index([ledgerAccountId])
+  @@map("ledger_entries")
+}
+
+model IdempotencyRecord {
+  id            String            @id @default(uuid()) @db.Uuid
+  principalId   String            @map("principal_id") @db.Uuid
+  operation     String
+  key           String
+  fingerprint   String
+  status        IdempotencyStatus
+  response      Json?
+  httpStatus    Int?              @map("http_status")
+  transactionId String?           @map("transaction_id") @db.Uuid
+  createdAt     DateTime          @default(now()) @map("created_at")
+
+  @@unique([principalId, operation, key])
+  @@map("idempotency_records")
+}
+
+model TransactionAttempt {
+  id            String         @id @default(uuid()) @db.Uuid
+  principalId   String         @map("principal_id") @db.Uuid
+  operation     String
+  outcome       AttemptOutcome
+  reasonCode    String?        @map("reason_code")
+  amountMinor   BigInt?        @map("amount_minor")
+  correlationId String         @map("correlation_id")
+  transactionId String?        @map("transaction_id") @db.Uuid
+  createdAt     DateTime       @default(now()) @map("created_at")
+  transaction   Transaction?   @relation(fields: [transactionId], references: [id])
+  user          User?          @relation(fields: [userId], references: [id])
+  userId        String?        @map("user_id") @db.Uuid
+
+  @@index([principalId, createdAt])
+  @@map("transaction_attempts")
+}
+
+model AuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  actorUserId   String?  @map("actor_user_id") @db.Uuid
+  action        String
+  targetType    String?  @map("target_type")
+  targetId      String?  @map("target_id")
+  metadata      Json     @default("{}")
+  correlationId String   @map("correlation_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  actor         User?    @relation(fields: [actorUserId], references: [id])
+
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
+}
+
+model ReconciliationRun {
+  id                   String                      @id @default(uuid()) @db.Uuid
+  startedBy            String                      @map("started_by") @db.Uuid
+  status               ReconciliationStatus
+  snapshotStartedAt    DateTime                    @map("snapshot_started_at")
+  consistencyMode      String                      @map("consistency_mode")
+  customerAccountCount Int                         @default(0) @map("customer_account_count")
+  systemAccountCount   Int                         @default(0) @map("system_account_count")
+  discrepancyCount     Int                         @default(0) @map("discrepancy_count")
+  currency             String                      @default("INR")
+  startedAt            DateTime                    @default(now()) @map("started_at")
+  completedAt          DateTime?                   @map("completed_at")
+  failureCode          String?                     @map("failure_code")
+  discrepancies        ReconciliationDiscrepancy[]
+  user                 User?                       @relation(fields: [userId], references: [id])
+  userId               String?                     @map("user_id") @db.Uuid
+
+  @@map("reconciliation_runs")
+}
+
+model ReconciliationDiscrepancy {
+  id      String            @id @default(uuid()) @db.Uuid
+  runId   String            @map("run_id") @db.Uuid
+  code    String
+  details Json
+  run     ReconciliationRun @relation(fields: [runId], references: [id])
+
+  @@map("reconciliation_discrepancies")
+}

@@ -1,0 +1,2 @@
+import 'dotenv/config';
+export const config={port:Number(process.env.PORT||4000),appEnv:process.env.APP_ENV||'DEMO',jwtSecret:process.env.JWT_SECRET||'development-only-change-this-secret-please',issuer:process.env.JWT_ISSUER||'ledgerline',audience:process.env.JWT_AUDIENCE||'ledgerline-web',cookie:process.env.REFRESH_COOKIE_NAME||'ll_refresh',cookieSecure:process.env.COOKIE_SECURE==='true',min:100n,max:100000000000n,cors:process.env.CORS_ORIGIN||'http://localhost:5173'};

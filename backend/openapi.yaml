@@ -1,0 +1,159 @@
+openapi: 3.1.0
+info:
+  title: LedgerLine API
+  version: 1.0.0
+  description: Demonstration internal ledger API. Not a bank or payment processor.
+servers:
+  - url: http://localhost:4000/api/v1
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 16, maxLength: 128}
+  schemas:
+    Error:
+      type: object
+      properties:
+        success: {const: false}
+        error:
+          type: object
+          properties:
+            code: {type: string}
+            message: {type: string}
+        correlationId: {type: string}
+    AmountMinor:
+      type: string
+      pattern: '^[0-9]+$'
+      description: Integer paise, minimum 100 and maximum 100000000000.
+    FinancialRequest:
+      type: object
+      required: [amountMinor, currency]
+      properties:
+        senderAccountId: {type: string, format: uuid}
+        receiverAccountId: {type: string, format: uuid}
+        amountMinor: {$ref: '#/components/schemas/AmountMinor'}
+        currency: {const: INR}
+        description: {type: string, maxLength: 250}
+    Transaction:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        type: {type: string, enum: [TRANSFER, DEPOSIT, WITHDRAWAL]}
+        status: {const: POSTED}
+        amountMinor: {$ref: '#/components/schemas/AmountMinor'}
+        currency: {const: INR}
+        createdAt: {type: string, format: date-time}
+        postedAt: {type: string, format: date-time}
+paths:
+  /auth/register:
+    post:
+      security: []
+      summary: Register a customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: {type: string, minLength: 1, maxLength: 100}
+                email: {type: string, format: email}
+                password: {type: string, minLength: 12, maxLength: 128}
+      responses: {'201': {description: Customer created}, '400': {description: Validation error}, '409': {description: Email already registered}}
+  /auth/login:
+    post:
+      security: []
+      summary: Login and set refresh cookie
+      responses: {'200': {description: Access JWT returned; refresh token set as HttpOnly cookie}}
+  /auth/refresh:
+    post:
+      security: []
+      summary: Rotate refresh token cookie
+      responses: {'200': {description: New access JWT and rotated cookie}, '401': {description: Session invalid}}
+  /auth/logout:
+    post:
+      summary: Revoke current session
+      responses: {'204': {description: Session revoked}}
+  /auth/me:
+    get:
+      summary: Return current authenticated profile
+      responses: {'200': {description: Current profile}}
+  /accounts:
+    get:
+      summary: List caller-owned accounts
+      responses: {'200': {description: Account list}}
+    post:
+      summary: Create zero-balance INR account
+      responses: {'201': {description: Account created}}
+  /accounts/lookup:
+    get:
+      summary: Lookup an eligible receiver by display account number
+      parameters:
+        - {name: accountNumber, in: query, required: true, schema: {type: string}}
+      responses: {'200': {description: Minimal masked receiver details}}
+  /accounts/{accountId}:
+    get:
+      summary: Get authorised account details
+      parameters:
+        - {name: accountId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses: {'200': {description: Account details}, '404': {description: Not found}}
+  /accounts/{accountId}/balance:
+    get:
+      summary: Get authorised account balance
+      parameters:
+        - {name: accountId, in: path, required: true, schema: {type: string, format: uuid}}
+      responses: {'200': {description: Balance in paise}}
+  /transfers:
+    post:
+      summary: Post an internal transfer
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/FinancialRequest'}
+                - required: [senderAccountId, receiverAccountId]
+      responses: {'201': {description: Posted}, '422': {description: Deterministic business rejection}, '409': {description: Idempotency conflict}}
+  /withdrawals:
+    post:
+      summary: Post a simulated withdrawal
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'201': {description: Posted}}
+  /deposits:
+    post:
+      summary: Post an authorised simulated deposit in DEMO/TEST only
+      parameters: [{$ref: '#/components/parameters/IdempotencyKey'}]
+      responses: {'201': {description: Posted}, '403': {description: Forbidden outside demo policy}}
+  /transactions:
+    get:
+      summary: List caller-authorised posted transactions
+      responses: {'200': {description: Posted transaction history}}
+  /transaction-attempts:
+    get:
+      summary: List caller's request attempts
+      responses: {'200': {description: Attempt history}}
+  /admin/accounts:
+    get:
+      summary: Search accounts (administrator)
+      parameters:
+        - {name: q, in: query, schema: {type: string}}
+      responses: {'200': {description: Account search results}, '403': {description: Forbidden}}
+  /admin/reconciliation:
+    get:
+      summary: List reconciliation runs
+      responses: {'200': {description: Reconciliation history}}
+    post:
+      summary: Run ledger reconciliation
+      responses: {'201': {description: Reconciliation completed}}

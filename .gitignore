@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+coverage/
+
+# Keep local environment example out of Git
+backend/.env.example

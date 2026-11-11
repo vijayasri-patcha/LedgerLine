@@ -1,0 +1,2 @@
+import {describe,it,expect} from 'vitest';import{createHash}from'node:crypto';
+describe('request fingerprint primitive',()=>{it('is stable for canonical JSON',()=>{const a=createHash('sha256').update(JSON.stringify({operation:'TRANSFER',amountMinor:'100',currency:'INR'})).digest('hex');const b=createHash('sha256').update(JSON.stringify({operation:'TRANSFER',amountMinor:'100',currency:'INR'})).digest('hex');expect(a).toBe(b);});});
